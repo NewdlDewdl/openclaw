@@ -80,6 +80,18 @@ describe("infra runtime", () => {
       await expect(promise).resolves.toBe("ok");
       expect(fn).toHaveBeenCalledTimes(2);
     });
+
+    it("does not apply default telegram retry regex when custom shouldRetry is provided", async () => {
+      vi.useFakeTimers();
+      const runner = createTelegramRetryRunner({
+        retry: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
+        shouldRetry: () => false,
+      });
+      const fn = vi.fn().mockRejectedValue(new Error("request timeout while sending"));
+
+      await expect(runner(fn, "request")).rejects.toThrow("request timeout while sending");
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("restart authorization", () => {

@@ -82,7 +82,8 @@ export function createTelegramRetryRunner(params: {
     ...params.retry,
   });
   const shouldRetry = params.shouldRetry
-    ? (err: unknown) => params.shouldRetry?.(err) || TELEGRAM_RETRY_RE.test(formatErrorMessage(err))
+    ? (err: unknown) =>
+        Boolean(params.shouldRetry?.(err)) || getTelegramRetryAfterMs(err) !== undefined
     : (err: unknown) => TELEGRAM_RETRY_RE.test(formatErrorMessage(err));
 
   return <T>(fn: () => Promise<T>, label?: string) =>
