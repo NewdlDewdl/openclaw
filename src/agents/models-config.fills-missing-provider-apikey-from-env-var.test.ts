@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { OpenClawConfig } from "../config/config.js";
+import {
+  clearConfigCache,
+  loadConfig,
+  resolveConfigPath,
+  type OpenClawConfig,
+} from "../config/config.js";
 import { validateConfigObject } from "../config/validation.js";
 import { resolveOpenClawAgentDir } from "./agent-paths.js";
 import {
@@ -230,6 +235,76 @@ describe("models-config", () => {
       });
       expect(parsed.providers.custom?.apiKey).toBe("CONFIG_KEY");
       expect(parsed.providers.custom?.baseUrl).toBe("https://config.example/v1");
+    });
+  });
+
+  it("restores env-backed custom provider refs and drops leaked plaintext merge values", async () => {
+    await withTempHome(async () => {
+      await withEnvVar("LLM_API_KEY", "sk-live-secret", async () => {
+        const configPath = resolveConfigPath();
+        await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
+        await fs.writeFile(
+          configPath,
+          JSON.stringify(
+            {
+              models: {
+                mode: "merge",
+                providers: {
+                  llmmodel: {
+                    baseUrl: "https://model.supplier/api/v3",
+                    api: "openai-completions",
+                    apiKey: "${LLM_API_KEY}",
+                    models: [
+                      {
+                        id: "llm-model-name",
+                        name: "LLMSAMPLE",
+                        input: ["text"],
+                        reasoning: false,
+                        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                        contextWindow: 8192,
+                        maxTokens: 2048,
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+            null,
+            2,
+          ),
+          "utf8",
+        );
+
+        await writeAgentModelsJson({
+          providers: {
+            llmmodel: {
+              baseUrl: "https://model.supplier/api/v3",
+              api: "openai-completions",
+              apiKey: "sk-leaked-plaintext",
+              models: [
+                {
+                  id: "llm-model-name",
+                  name: "LLMSAMPLE",
+                  input: ["text"],
+                  reasoning: false,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 8192,
+                  maxTokens: 2048,
+                },
+              ],
+            },
+          },
+        });
+
+        clearConfigCache();
+        const cfg = loadConfig();
+        await ensureOpenClawModelsJson(cfg);
+
+        const parsed = await readGeneratedModelsJson<{
+          providers: Record<string, { apiKey?: string }>;
+        }>();
+        expect(parsed.providers.llmmodel?.apiKey).toBe("LLM_API_KEY");
+      });
     });
   });
 

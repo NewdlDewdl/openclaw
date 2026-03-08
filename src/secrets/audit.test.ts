@@ -109,6 +109,31 @@ describe("secrets audit", () => {
     expect(hasFinding(report, (entry) => entry.code === "PLAINTEXT_FOUND")).toBe(true);
   });
 
+  it("does not flag ${ENV_VAR} config values as plaintext", async () => {
+    await writeJsonFile(fixture.configPath, {
+      models: {
+        providers: {
+          custom: {
+            baseUrl: "https://model.supplier/api/v3",
+            api: "openai-completions",
+            apiKey: "${OPENAI_API_KEY}",
+            models: [{ id: "llm-model-name", name: "LLMSAMPLE" }],
+          },
+        },
+      },
+    });
+    await fs.rm(fixture.authStorePath, { force: true });
+    await fs.writeFile(fixture.envPath, "", "utf8");
+
+    const report = await runSecretsAudit({ env: fixture.env });
+    expect(report.status).toBe("clean");
+    expect(
+      report.findings.filter(
+        (entry) => entry.file === fixture.configPath && entry.code === "PLAINTEXT_FOUND",
+      ),
+    ).toEqual([]);
+  });
+
   it("does not mutate legacy auth.json during audit", async () => {
     await fs.rm(fixture.authStorePath, { force: true });
     await writeJsonFile(fixture.authJsonPath, {

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import { resolveStateDir, type OpenClawConfig } from "../config/config.js";
+import { restoreEnvVarRefs } from "../config/env-preserve.js";
 import { resolveSecretInputRef, type SecretRef } from "../config/types.secrets.js";
 import { resolveConfigDir, resolveUserPath } from "../utils.js";
 import { runTasksWithConcurrency } from "../utils/run-with-concurrency.js";
@@ -483,10 +484,13 @@ export async function runSecretsAudit(
   const stateDir = resolveStateDir(env, os.homedir);
   const envPath = path.join(resolveConfigDir(env, os.homedir), ".env");
   const config = snapshot.valid ? snapshot.config : ({} as OpenClawConfig);
+  const configForSecretScan = snapshot.valid
+    ? (restoreEnvVarRefs(snapshot.config, snapshot.parsed, env) as OpenClawConfig)
+    : ({} as OpenClawConfig);
 
   if (snapshot.valid) {
     collectConfigSecrets({
-      config,
+      config: configForSecretScan,
       configPath,
       collector,
     });

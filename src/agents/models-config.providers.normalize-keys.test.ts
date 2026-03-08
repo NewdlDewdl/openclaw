@@ -73,4 +73,33 @@ describe("normalizeProviders", () => {
       await fs.rm(agentDir, { recursive: true, force: true });
     }
   });
+
+  it("normalizes env SecretRef apiKey objects into env-var names", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-"));
+    try {
+      const providers: NonNullable<NonNullable<OpenClawConfig["models"]>["providers"]> = {
+        custom: {
+          baseUrl: "https://model.supplier/api/v3",
+          api: "openai-completions",
+          apiKey: { source: "env", provider: "default", id: "LLM_API_KEY" },
+          models: [
+            {
+              id: "llm-model-name",
+              name: "LLMSAMPLE",
+              input: ["text"],
+              reasoning: false,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 8192,
+              maxTokens: 2048,
+            },
+          ],
+        },
+      };
+
+      const normalized = normalizeProviders({ providers, agentDir });
+      expect(normalized?.custom?.apiKey).toBe("LLM_API_KEY");
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+    }
+  });
 });

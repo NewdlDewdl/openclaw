@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { type OpenClawConfig, loadConfig } from "../config/config.js";
+import { type OpenClawConfig, loadConfig, readConfigFileSnapshot } from "../config/config.js";
 import { applyConfigEnvVars } from "../config/env-vars.js";
+import { resolveSecretInputRef } from "../config/types.secrets.js";
 import { isRecord } from "../utils.js";
 import { resolveOpenClawAgentDir } from "./agent-paths.js";
+import { normalizeProviderId } from "./model-selection.js";
 import {
   normalizeProviders,
   type ProviderConfig,
@@ -111,12 +113,102 @@ async function readJson(pathname: string): Promise<unknown> {
   }
 }
 
+function resolveProviderEntryByKey(
+  providers: Record<string, unknown>,
+  providerKey: string,
+): Record<string, unknown> | null {
+  const trimmedKey = providerKey.trim();
+  if (!trimmedKey) {
+    return null;
+  }
+
+  const direct = providers[trimmedKey];
+  if (isRecord(direct)) {
+    return direct;
+  }
+
+  const normalizedTarget = normalizeProviderId(trimmedKey);
+  for (const [candidateKey, value] of Object.entries(providers)) {
+    if (!isRecord(value)) {
+      continue;
+    }
+    const candidateTrimmed = candidateKey.trim();
+    if (!candidateTrimmed) {
+      continue;
+    }
+    if (
+      candidateTrimmed === trimmedKey ||
+      normalizeProviderId(candidateTrimmed) === normalizedTarget
+    ) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+async function restoreSourceProviderApiKeyRefs(params: {
+  cfg: OpenClawConfig;
+  explicitProviders: Record<string, ProviderConfig>;
+}): Promise<Record<string, ProviderConfig>> {
+  if (Object.keys(params.explicitProviders).length === 0) {
+    return params.explicitProviders;
+  }
+
+  let snapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>>;
+  try {
+    snapshot = await readConfigFileSnapshot();
+  } catch {
+    return params.explicitProviders;
+  }
+  if (!snapshot.valid) {
+    return params.explicitProviders;
+  }
+
+  const parsed = snapshot.parsed;
+  if (!isRecord(parsed) || !isRecord(parsed.models) || !isRecord(parsed.models.providers)) {
+    return params.explicitProviders;
+  }
+  const parsedProviders = parsed.models.providers;
+
+  let mutated = false;
+  const nextProviders: Record<string, ProviderConfig> = { ...params.explicitProviders };
+  for (const [providerKey, provider] of Object.entries(nextProviders)) {
+    const sourceProvider = resolveProviderEntryByKey(parsedProviders, providerKey);
+    if (!sourceProvider || !("apiKey" in sourceProvider)) {
+      continue;
+    }
+    const sourceApiKey = sourceProvider.apiKey;
+    const { ref } = resolveSecretInputRef({
+      value: sourceApiKey,
+      defaults: params.cfg.secrets?.defaults,
+    });
+    if (!ref) {
+      continue;
+    }
+
+    if (provider.apiKey === sourceApiKey) {
+      continue;
+    }
+    mutated = true;
+    nextProviders[providerKey] = {
+      ...provider,
+      apiKey: sourceApiKey as ProviderConfig["apiKey"],
+    };
+  }
+
+  return mutated ? nextProviders : params.explicitProviders;
+}
+
 async function resolveProvidersForModelsJson(params: {
   cfg: OpenClawConfig;
   agentDir: string;
 }): Promise<Record<string, ProviderConfig>> {
   const { cfg, agentDir } = params;
-  const explicitProviders = cfg.models?.providers ?? {};
+  const explicitProviders = await restoreSourceProviderApiKeyRefs({
+    cfg,
+    explicitProviders: cfg.models?.providers ?? {},
+  });
   const implicitProviders = await resolveImplicitProviders({ agentDir, explicitProviders });
   const providers: Record<string, ProviderConfig> = mergeProviders({
     implicit: implicitProviders,
@@ -159,7 +251,19 @@ function mergeWithExistingProviderSecrets(params: {
       continue;
     }
     const preserved: Record<string, unknown> = {};
-    if (typeof existing.apiKey === "string" && existing.apiKey) {
+    const hasIncomingApiKeyRef = Boolean(
+      resolveSecretInputRef({
+        value: newEntry.apiKey,
+      }).ref,
+    );
+    const incomingLooksLikeEnvVarName =
+      typeof newEntry.apiKey === "string" && /^[A-Z][A-Z0-9_]{0,127}$/.test(newEntry.apiKey.trim());
+    if (
+      typeof existing.apiKey === "string" &&
+      existing.apiKey &&
+      !hasIncomingApiKeyRef &&
+      !incomingLooksLikeEnvVarName
+    ) {
       preserved.apiKey = existing.apiKey;
     }
     if (typeof existing.baseUrl === "string" && existing.baseUrl) {

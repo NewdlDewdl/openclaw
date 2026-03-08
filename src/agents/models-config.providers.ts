@@ -504,7 +504,20 @@ export function normalizeProviders(params: {
       mutated = true;
     }
     let normalizedProvider = provider;
-    const configuredApiKey = normalizedProvider.apiKey;
+    let configuredApiKey = normalizedProvider.apiKey;
+
+    const configuredApiRef = coerceSecretRef(configuredApiKey);
+    if (configuredApiRef?.source === "env" && configuredApiRef.id.trim()) {
+      const envVarName = configuredApiRef.id.trim();
+      if (configuredApiKey !== envVarName) {
+        mutated = true;
+        normalizedProvider = {
+          ...normalizedProvider,
+          apiKey: envVarName,
+        };
+        configuredApiKey = normalizedProvider.apiKey;
+      }
+    }
 
     // Fix common misconfig: apiKey set to "${ENV_VAR}" instead of "ENV_VAR".
     if (
