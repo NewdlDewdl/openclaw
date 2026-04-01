@@ -8,10 +8,13 @@ vi.mock("../chrome-mcp.js", () => ({
 let registerBrowserBasicRoutes: typeof import("./basic.js").registerBrowserBasicRoutes;
 let BrowserProfileUnavailableError: typeof import("../errors.js").BrowserProfileUnavailableError;
 
-function createExistingSessionProfileState(params?: { isHttpReachable?: () => Promise<boolean> }) {
+function createExistingSessionProfileState(params?: {
+  enabled?: boolean;
+  isHttpReachable?: () => Promise<boolean>;
+}) {
   return {
     resolved: {
-      enabled: true,
+      enabled: params?.enabled ?? true,
       headless: false,
       noSandbox: false,
       executablePath: undefined,
@@ -59,6 +62,18 @@ beforeEach(async () => {
 });
 
 describe("basic browser routes", () => {
+  it("returns an actionable 503 when browser hosting is disabled", async () => {
+    const response = await callBasicRouteWithState({
+      state: createExistingSessionProfileState({ enabled: false }),
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toMatchObject({
+      error:
+        "browser hosting is not enabled. Configure browser.hosting in your gateway config and restart the gateway.",
+    });
+  });
+
   it("maps existing-session status failures to JSON browser errors", async () => {
     const response = await callBasicRouteWithState({
       state: createExistingSessionProfileState({
